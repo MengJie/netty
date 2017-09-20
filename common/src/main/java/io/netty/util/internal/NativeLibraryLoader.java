@@ -21,6 +21,7 @@ import io.netty.util.internal.logging.InternalLoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -79,7 +80,6 @@ public final class NativeLibraryLoader {
         for (String name : names) {
             try {
                 load(name, loader);
-                logger.debug("Successfully loaded the library: {}", name);
                 return;
             } catch (Throwable t) {
                 logger.debug("Unable to load the library '{}', trying next name...", name, t);
@@ -116,7 +116,6 @@ public final class NativeLibraryLoader {
         try {
             // first try to load from java.library.path
             loadLibrary(loader, name, false);
-            logger.debug("{} was loaded from java.libary.path", name);
             return;
         } catch (Throwable ex) {
             logger.debug(
@@ -127,22 +126,28 @@ public final class NativeLibraryLoader {
         String libname = System.mapLibraryName(name);
         String path = NATIVE_RESOURCE_HOME + libname;
 
-        URL url = loader.getResource(path);
-        if (url == null && PlatformDependent.isOsx()) {
-            if (path.endsWith(".jnilib")) {
-                url = loader.getResource(NATIVE_RESOURCE_HOME + "lib" + name + ".dynlib");
-            } else {
-                url = loader.getResource(NATIVE_RESOURCE_HOME + "lib" + name + ".jnilib");
-            }
-        }
-
-        int index = libname.lastIndexOf('.');
-        String prefix = libname.substring(0, index);
-        String suffix = libname.substring(index, libname.length());
         InputStream in = null;
         OutputStream out = null;
         File tmpFile = null;
+        URL url = loader.getResource(path);
         try {
+            if (url == null) {
+                if (PlatformDependent.isOsx()) {
+                    String fileName = path.endsWith(".jnilib") ? NATIVE_RESOURCE_HOME + "lib" + name + ".dynlib" :
+                            NATIVE_RESOURCE_HOME + "lib" + name + ".jnilib";
+                    url = loader.getResource(fileName);
+                    if (url == null) {
+                        throw new FileNotFoundException(fileName);
+                    }
+                } else {
+                    throw new FileNotFoundException(path);
+                }
+            }
+
+            int index = libname.lastIndexOf('.');
+            String prefix = libname.substring(0, index);
+            String suffix = libname.substring(index, libname.length());
+
             tmpFile = File.createTempFile(prefix, suffix, WORKDIR);
             in = url.openStream();
             out = new FileOutputStream(tmpFile);
@@ -200,6 +205,7 @@ public final class NativeLibraryLoader {
             // Make sure the helper is belong to the target ClassLoader.
             final Class<?> newHelper = tryToLoadClass(loader, NativeLibraryUtil.class);
             loadLibraryByHelper(newHelper, name, absolute);
+            logger.debug("Successfully loaded the library {}", name);
             return;
         } catch (UnsatisfiedLinkError e) { // Should by pass the UnsatisfiedLinkError here!
             logger.debug("Unable to load the library '{}', trying other loading mechanism.", name, e);
@@ -207,6 +213,7 @@ public final class NativeLibraryLoader {
             logger.debug("Unable to load the library '{}', trying other loading mechanism.", name, e);
         }
         NativeLibraryUtil.loadLibrary(name, absolute);  // Fallback to local helper class.
+        logger.debug("Successfully loaded the library {}", name);
     }
 
     private static void loadLibraryByHelper(final Class<?> helper, final String name, final boolean absolute)
